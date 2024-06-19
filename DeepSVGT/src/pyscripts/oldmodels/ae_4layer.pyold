@@ -1,0 +1,98 @@
+"""
+https://towardsdatascience.com/modeling-dna-sequences-with-pytorch-de28b0a05036
+https://avandekleut.github.io/vae/
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from utils import plot_latent
+from datasets import build_dataloaders
+
+torch.manual_seed(0)
+
+
+class Encoder(nn.Module):
+    def __init__(self, input_size, latent_dims):
+        super(Encoder, self).__init__()
+        self.linear1 = nn.Linear(input_size, 512)
+        self.linear2 = nn.Linear(512, 256)
+        self.linear3 = nn.Linear(256, 128)
+        self.linear4 = nn.Linear(128, latent_dims)
+
+    def forward(self, x):
+        x = torch.flatten(x, start_dim=1)
+        x = F.relu(self.linear1(x))
+        x = F.relu(self.linear2(x))
+        x = F.relu(self.linear3(x))
+        return self.linear4(x)
+
+
+class Decoder(nn.Module):
+    def __init__(self, input_size, latent_dims):
+        super(Decoder, self).__init__()
+        self.linear1 = nn.Linear(latent_dims, 128)
+        self.linear2 = nn.Linear(128, 256)
+        self.linear3 = nn.Linear(256, 512)
+        self.linear4 = nn.Linear(512, input_size)
+
+    def forward(self, z):
+        z = F.relu(self.linear1(z))
+        z = torch.relu(self.linear2(z))
+        z = torch.relu(self.linear3(z))
+        z = torch.sigmoid(self.linear4(z))
+        return z
+        # return z.reshape((-1, 1, 100, 1200))
+
+
+class Autoencoder(nn.Module):
+    def __init__(self, input_size, latent_dims):
+        super(Autoencoder, self).__init__()
+        self.encoder = Encoder(input_size, latent_dims)
+        self.decoder = Decoder(input_size, latent_dims)
+
+    def forward(self, x):
+        z = self.encoder(x)
+        return self.decoder(z)
+
+    def loss_fn(self, x, x_hat):
+        return ((x - x_hat)**2).sum()
+
+"""
+6(ATGCN-) * 200(seq size) = 1200
+"""
+
+SEQ_SIZE = 150
+KMER = 0
+
+VEC_SIZE = KMER if KMER else SEQ_SIZE 
+INPUT_SIZE = 4 * VEC_SIZE
+LATENT_DIMS = 2
+EPOCHS = 140
+
+def train(autoencoder, data, epochs=EPOCHS):
+    opt = torch.optim.Adam(autoencoder.parameters())
+    for epoch in range(epochs):
+        for x, y in data:
+            x = x.to(DEVICE) #[100, 200, 6]
+            x = x.view(x.size(0), -1) #[100, 1200]
+
+            opt.zero_grad()
+
+            x_hat = autoencoder(x)
+            loss = autoencoder.loss_fn(x, x_hat)
+            
+            loss.backward()
+            opt.step()
+
+    return autoencoder
+
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+data, _ = build_dataloaders(seq_size=SEQ_SIZE, group_subs_rate=0.7, subs_rate=0.1, kmer=KMER)
+
+autoencoder = Autoencoder(INPUT_SIZE, LATENT_DIMS).to(DEVICE)
+autoencoder = train(autoencoder, data)
+
+plot_latent(autoencoder, data, DEVICE)
+
